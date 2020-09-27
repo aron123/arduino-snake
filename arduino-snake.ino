@@ -93,7 +93,7 @@ int snake[SNAKE_MAX_SIZE][2]  = {
 };
 int snakeLength = 4;
 int snakeDirection = SNAKE_DIRECTION_LEFT;
-int snakeSpeed = 200; // ms between movement frames
+int snakeSpeed = 100; // ms between movement frames
 int food[2] = { 4, 4 };
 int mode = MODE_START_SCREEN;
 
@@ -129,17 +129,25 @@ void loop() {
   if (mode == MODE_START_SCREEN && digitalRead(BUTTON_CONTROL) == LOW) { // step into game
     // TODO uncomment: playNokiaTune();
     mode = MODE_GAME_SCREEN;
+    bool doEats = false;
 
     while (true) {
       display.clearDisplay();
-      moveSnake(snake, snakeLength, snakeDirection);
+      snakeDirection = determineDirection(snakeDirection);
+      doEats = isSnakeEating(snake, snakeLength, food);
+
+      if (doEats) {
+        snakeLength++;
+        moveFood(snake, snakeLength, food);
+      }
+      
+      moveSnake(snake, snakeLength, snakeDirection, doEats);
       drawBorders();
       drawSnake(snake, snakeLength);
       drawFood(food);
       display.display();
       delay(snakeSpeed);
     }
-
   }
 }
 
@@ -157,14 +165,125 @@ void drawFood (int food[2]) {
   display.fillRect(BLOCK_SIZE * food[0], BLOCK_SIZE * food[1], BLOCK_SIZE, BLOCK_SIZE, BLACK);
 }
 
-void moveSnake(int snake[][2], int length, int direction) {
-  int previousBlock[2] = { 0, 0 };
+int determineDirection (int currentDirection) {
+  bool upPushed = digitalRead(BUTTON_UP) == LOW;
+  bool rightPushed = digitalRead(BUTTON_RIGHT) == LOW;
+  bool downPushed = digitalRead(BUTTON_DOWN) == LOW;
+  bool leftPushed = digitalRead(BUTTON_LEFT) == LOW;
 
+  if (!upPushed && !rightPushed && !downPushed && !leftPushed) {
+    return currentDirection;
+  }
+
+  if (upPushed && currentDirection == SNAKE_DIRECTION_UP
+      || rightPushed && currentDirection == SNAKE_DIRECTION_RIGHT
+      || downPushed && currentDirection == SNAKE_DIRECTION_DOWN
+      || leftPushed && currentDirection == SNAKE_DIRECTION_LEFT) {
+    return currentDirection;
+  }
+
+  if (upPushed && currentDirection == SNAKE_DIRECTION_DOWN
+      || rightPushed && currentDirection == SNAKE_DIRECTION_LEFT
+      || downPushed && currentDirection == SNAKE_DIRECTION_UP
+      || leftPushed && currentDirection == SNAKE_DIRECTION_RIGHT) {
+    return currentDirection;
+  }
+
+  int pushedCount = 0;
+  int buttonPushes[] = { upPushed, rightPushed, downPushed, leftPushed };
+
+  for (int i = 0; i < 4; i++) {
+    pushedCount += buttonPushes[i];
+  }
+
+  if (pushedCount != 1) {
+    return currentDirection;
+  }
+
+  if (upPushed) {
+    return SNAKE_DIRECTION_UP;
+  }
+  if (rightPushed) {
+    return SNAKE_DIRECTION_RIGHT;
+  }
+  if (downPushed) {
+    return SNAKE_DIRECTION_DOWN;
+  }
+  if (leftPushed) {
+    return SNAKE_DIRECTION_LEFT;
+  }
+}
+
+bool isFoodInsideSnake(int snake[][2], int snakeLength, int foodX, int foodY) {
+  for (int i = 0; i < snakeLength; i++) {
+    if (snake[i][0] == foodX && snake[i][1] == foodY) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+bool isSnakeEating (int snake[][2], int snakeLength, int food[2]) {
+  int head = snakeLength - 1;
+  return food[0] == snake[head][0] && food[1] == snake[head][1];
+}
+
+bool moveFood(int snake[][2], int snakeLength, int food[2]) {
+  int width, height;
+
+  do {
+    width = random(1, GAME_WIDTH - 1);
+    height = random(1, GAME_HEIGHT - 1);
+  } while (isFoodInsideSnake(snake, snakeLength, width, height));
+
+  food[0] = width;
+  food[1] = height;
+}
+
+
+void moveSnake(int snake[][2], int length, int direction, bool doEats) {
+  int previousBlock[2] = { 0, 0 };
+  int head = length - 1;
+
+  // if snake eats, only put one block on the head 
+  if (doEats) {
+    int secondBlock[2] = {snake[head - 1][0], snake[head - 1][1]};
+
+    if (direction == SNAKE_DIRECTION_UP) {
+      snake[head][0] = secondBlock[0];
+      snake[head][1] = secondBlock[1] - 1;
+    }
+    else if (direction == SNAKE_DIRECTION_RIGHT) {
+      snake[head][0] = secondBlock[0] + 1;
+      snake[head][1] = secondBlock[1];
+    }
+    else if (direction == SNAKE_DIRECTION_DOWN) {
+      snake[head][0] = secondBlock[0];
+      snake[head][1] = secondBlock[1] + 1;
+    }
+    else if (direction == SNAKE_DIRECTION_LEFT) {
+      snake[head][0] = secondBlock[0] - 1;
+      snake[head][1] = secondBlock[1];
+    }
+
+    return;
+  }
+  
+  // avoid to overcome borders
+  if (direction == SNAKE_DIRECTION_UP && snake[head][1] == 0
+      || direction == SNAKE_DIRECTION_RIGHT && snake[head][0] == GAME_WIDTH - 1
+      || direction == SNAKE_DIRECTION_DOWN && snake[head][1] == GAME_HEIGHT - 1
+      || direction == SNAKE_DIRECTION_LEFT && snake[head][0] == 0) {
+    return;
+  }
+
+  // move head, shift body parts
   for (int i = length - 1; i >= 0; i--) {
     if (i == length - 1) {
       previousBlock[0] = snake[i][0];
       previousBlock[1] = snake[i][1];
-      
+
       if (direction == SNAKE_DIRECTION_UP) {
         snake[i][1] -= 1;
       }
