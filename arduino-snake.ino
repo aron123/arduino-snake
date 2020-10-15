@@ -7,10 +7,10 @@
 
 // LCD pins
 #define RST 12
-#define CE  13
-#define DC  11
-#define DIN  10
-#define CLK  9
+#define CE 13
+#define DC 11
+#define DIN 10
+#define CLK 9
 
 // button pins
 #define BUTTON_UP 2
@@ -24,12 +24,19 @@
 #define GAME_WIDTH 84/BLOCK_SIZE
 #define GAME_HEIGHT 48/BLOCK_SIZE
 #define SNAKE_MAX_SIZE 64
+
 #define SNAKE_DIRECTION_UP 1
 #define SNAKE_DIRECTION_RIGHT 2
 #define SNAKE_DIRECTION_DOWN 3
 #define SNAKE_DIRECTION_LEFT 4
+
 #define MODE_START_SCREEN 1
 #define MODE_GAME_SCREEN 2
+#define MODE_RESULT_SCREEN 3
+
+#define GAME_STATE_IN_PROGRESS 1
+#define GAME_STATE_WIN 2
+#define GAME_STATE_GAMEOVER 3
 
 const uint8_t PROGMEM snake_start_Bitmap [] PROGMEM = {
   B00000000, B00000000, B00000000, B00000000, B00000000, B00000000, B00000000, B00000000, B00000000, B00000000, B00000000,
@@ -84,24 +91,18 @@ const uint8_t PROGMEM snake_start_Bitmap [] PROGMEM = {
 
 // Globals
 Adafruit_PCD8544 display = Adafruit_PCD8544(CLK, DIN, DC, CE, RST);
-int snake[SNAKE_MAX_SIZE][2]  = {
-  {17, 8},
-  {16, 8},
-  {15, 8},
-  {14, 8},
-  0
-};
+int snake[SNAKE_MAX_SIZE][2]  = {0};
 int snakeLength = 4;
 int snakeDirection = SNAKE_DIRECTION_LEFT;
-int snakeSpeed = 100; // ms between movement frames
 int food[2] = { 4, 4 };
+int snakeSpeed = 100; // ms between movement frames
 int mode = MODE_START_SCREEN;
+int gameState = GAME_STATE_IN_PROGRESS;
 
 void setup() {
   pinMode(SPEAKER_OUT, OUTPUT);
 
-  pinMode(8, OUTPUT);
-  digitalWrite(8, HIGH);
+  randomSeed(analogRead(0));
 
   // Setup display
   display.begin();
@@ -127,20 +128,43 @@ void setup() {
 
 void loop() {
   if (mode == MODE_START_SCREEN && digitalRead(BUTTON_CONTROL) == LOW) { // step into game
-    // TODO uncomment: playNokiaTune();
     mode = MODE_GAME_SCREEN;
+    gameState = GAME_STATE_IN_PROGRESS;
+    initializeGame();
+
     bool doEats = false;
+    bool doBitesItself = false;
+    bool doCollidesWithWall = false;
+
+    playNokiaTune();
 
     while (true) {
       display.clearDisplay();
       snakeDirection = determineDirection(snakeDirection);
       doEats = isSnakeEating(snake, snakeLength, food);
+      doBitesItself = isSnakeBitesItself(snake, snakeLength);
+      doCollidesWithWall = isSnakeCollidesWithWall(snake, snakeLength, snakeDirection);
 
       if (doEats) {
         snakeLength++;
+        playFoodCatchSound();
         moveFood(snake, snakeLength, food);
       }
-      
+
+      if (doBitesItself || doCollidesWithWall) {
+        gameState = GAME_STATE_GAMEOVER;
+        mode = MODE_RESULT_SCREEN;
+        playGameOverSound();
+        break;
+      }
+
+      if (snakeLength == SNAKE_MAX_SIZE) {
+        gameState = GAME_STATE_WIN;
+        mode = MODE_RESULT_SCREEN;
+        playWinnerSound();
+        break;
+      }
+
       moveSnake(snake, snakeLength, snakeDirection, doEats);
       drawBorders();
       drawSnake(snake, snakeLength);
@@ -149,6 +173,56 @@ void loop() {
       delay(snakeSpeed);
     }
   }
+
+  if (mode == MODE_RESULT_SCREEN && gameState == GAME_STATE_GAMEOVER) {
+    display.clearDisplay();
+    display.setCursor(6, 0);
+    display.println("Game Over :(");
+    display.setCursor(4, 12);
+    display.println("Length was " + String(snakeLength));
+    display.setCursor(8, 36);
+    display.println("New game: F");
+    display.display();
+  }
+
+  if (mode == MODE_RESULT_SCREEN && gameState == GAME_STATE_WIN) {
+    display.clearDisplay();
+    display.setCursor(16, 0);
+    display.println("You won!");
+    display.setCursor(4, 12);
+    display.println("Length was " + String(snakeLength));
+    display.setCursor(8, 36);
+    display.println("New game: F");
+    display.display();
+  }
+
+  if (mode == MODE_RESULT_SCREEN && digitalRead(BUTTON_CONTROL) == LOW) {
+    mode = MODE_START_SCREEN;
+  }
+}
+
+void initializeGame() {
+  snakeLength = 4;
+  snakeDirection = SNAKE_DIRECTION_LEFT;
+  food[0] = 4;
+  food[1] = 4;
+
+  for (int i = 0; i < SNAKE_MAX_SIZE; i++) {
+    snake[i][0] = 0;
+    snake[i][1] = 0;
+  }
+
+  snake[0][0] = 17;
+  snake[0][1] = 8;
+
+  snake[1][0] = 16;
+  snake[1][1] = 8;
+
+  snake[2][0] = 15;
+  snake[2][1] = 8;
+
+  snake[3][0] = 14;
+  snake[3][1] = 8;
 }
 
 void drawBorders () {
@@ -229,6 +303,29 @@ bool isSnakeEating (int snake[][2], int snakeLength, int food[2]) {
   return food[0] == snake[head][0] && food[1] == snake[head][1];
 }
 
+bool isSnakeBitesItself(int snake[][2], int snakeLength) {
+  int headX = snake[snakeLength - 1][0];
+  int headY = snake[snakeLength - 1][1];
+
+  for (int i = 0; i < snakeLength - 1; i++) {
+    if (snake[i][0] == headX && snake[i][1] == headY) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+bool isSnakeCollidesWithWall(int snake[][2], int snakeLength, int direction) {
+  int headX = snake[snakeLength - 1][0];
+  int headY = snake[snakeLength - 1][1];
+
+  return (headX == 0 && direction == SNAKE_DIRECTION_LEFT
+          || headY == 0 && direction == SNAKE_DIRECTION_UP
+          || headX == GAME_WIDTH - 1 && direction == SNAKE_DIRECTION_RIGHT
+          || headY == GAME_HEIGHT - 1 && direction == SNAKE_DIRECTION_DOWN);
+}
+
 bool moveFood(int snake[][2], int snakeLength, int food[2]) {
   int width, height;
 
@@ -246,7 +343,7 @@ void moveSnake(int snake[][2], int length, int direction, bool doEats) {
   int previousBlock[2] = { 0, 0 };
   int head = length - 1;
 
-  // if snake eats, only put one block on the head 
+  // if snake eats, only put one block on the head
   if (doEats) {
     int secondBlock[2] = {snake[head - 1][0], snake[head - 1][1]};
 
@@ -269,7 +366,7 @@ void moveSnake(int snake[][2], int length, int direction, bool doEats) {
 
     return;
   }
-  
+
   // avoid to overcome borders
   if (direction == SNAKE_DIRECTION_UP && snake[head][1] == 0
       || direction == SNAKE_DIRECTION_RIGHT && snake[head][0] == GAME_WIDTH - 1
@@ -356,78 +453,45 @@ void playFoodCatchSound() {
   tone(SPEAKER_OUT, 500, 75);
 }
 
-void playWinnerSound() {
-
-  for (int j = 0; j < 2; j++) {
-    for (int i = 0; i < 150; i++) {
-      digitalWrite(SPEAKER_OUT, HIGH);
-      delayMicroseconds(250);
-      digitalWrite(SPEAKER_OUT, LOW);
-      delayMicroseconds(250);
-    }
-
-    for (int i = 0; i < 150; i++) {
-      digitalWrite(SPEAKER_OUT, HIGH);
-      delayMicroseconds(300);
-      digitalWrite(SPEAKER_OUT, LOW);
-      delayMicroseconds(300);
-    }
-
-    for (int i = 0; i < 150; i++) {
-      digitalWrite(SPEAKER_OUT, HIGH);
-      delayMicroseconds(350);
-      digitalWrite(SPEAKER_OUT, LOW);
-      delayMicroseconds(350);
-    }
-
-    for (int i = 0; i < 150; i++) {
-      digitalWrite(SPEAKER_OUT, HIGH);
-      delayMicroseconds(300);
-      digitalWrite(SPEAKER_OUT, LOW);
-      delayMicroseconds(300);
-    }
-
-    for (int i = 0; i < 150; i++) {
-      digitalWrite(SPEAKER_OUT, HIGH);
-      delayMicroseconds(350);
-      digitalWrite(SPEAKER_OUT, LOW);
-      delayMicroseconds(350);
-    }
-  }
+void playGameOverSound() {
+  tone(SPEAKER_OUT, 369, 75.0);
+  delay(83.3333333333);
+  tone(SPEAKER_OUT, 349, 75.0);
+  delay(83.3333333333);
+  tone(SPEAKER_OUT, 311, 75.0);
+  delay(83.3333333333);
+  tone(SPEAKER_OUT, 277, 75.0);
+  delay(83.3333333333);
+  tone(SPEAKER_OUT, 261, 75.0);
+  delay(83.3333333333);
+  tone(SPEAKER_OUT, 233, 75.0);
+  delay(83.3333333333);
+  tone(SPEAKER_OUT, 220, 450.0);
+  delay(500.0);
 }
 
-void playLooseSound() {
-  for (int i = 0; i < 150; i++) {
-    digitalWrite(SPEAKER_OUT, HIGH);
-    delayMicroseconds(250);
-    digitalWrite(SPEAKER_OUT, LOW);
-    delayMicroseconds(250);
-  }
-
-  delay(250);
-
-  for (int i = 0; i < 150; i++) {
-    digitalWrite(SPEAKER_OUT, HIGH);
-    delayMicroseconds(300);
-    digitalWrite(SPEAKER_OUT, LOW);
-    delayMicroseconds(300);
-  }
-
-  delay(250);
-
-  for (int i = 0; i < 150; i++) {
-    digitalWrite(SPEAKER_OUT, HIGH);
-    delayMicroseconds(350);
-    digitalWrite(SPEAKER_OUT, LOW);
-    delayMicroseconds(350);
-  }
-
-  delay(250);
-
-  for (int i = 0; i < 750; i++) {
-    digitalWrite(SPEAKER_OUT, HIGH);
-    delayMicroseconds(400);
-    digitalWrite(SPEAKER_OUT, LOW);
-    delayMicroseconds(400);
-  }
+void playWinnerSound() {
+  tone(SPEAKER_OUT, 220, 78.94725);
+  delay(87.7191666667);
+  delay(175.438333333);
+  tone(SPEAKER_OUT, 220, 78.94725);
+  delay(87.7191666667);
+  tone(SPEAKER_OUT, 220, 78.94725);
+  delay(87.7191666667);
+  tone(SPEAKER_OUT, 220, 78.94725);
+  delay(87.7191666667);
+  tone(SPEAKER_OUT, 246, 78.94725);
+  delay(87.7191666667);
+  delay(175.438333333);
+  tone(SPEAKER_OUT, 246, 78.94725);
+  delay(87.7191666667);
+  delay(175.438333333);
+  tone(SPEAKER_OUT, 277, 78.94725);
+  delay(87.7191666667);
+  delay(175.438333333);
+  tone(SPEAKER_OUT, 220, 78.94725);
+  delay(87.7191666667);
+  delay(175.438333333);
+  tone(SPEAKER_OUT, 246, 236.84175);
+  delay(263.1575);
 }
